@@ -52,6 +52,88 @@ func GenShareName(volName string) string {
 	return shareName
 }
 
+// Share naming.
+//
+// Layout: {status}-csi-pvc[-{app}]-{uuid}, within MaxShareLen (32).
+//
+//	k8s-csi-pvc-myapp-729da2eaf
+//	└─ 11 ─┘ └ ≤10 ┘ └── 9 ──┘
+//
+// The trailing uuid is the *lookup key*: it is derived from the CSI volume name
+// alone, so a share can still be found even though the {app} segment is not
+// recoverable from it. {app} is cosmetic and is what gets truncated when space
+// runs out — the uuid never is, because shortening it would weaken uniqueness.
+const (
+	ShareUUIDLen  = 9  // hex chars of the PV UUID kept as the lookup key
+	MaxAppNameLen = 10 // cosmetic app segment budget
+)
+
+// ShareUUIDSlice derives the stable lookup key from a CSI volume name, which
+// Kubernetes sets to the PV name ("pvc-<uuid>"). Hyphens are stripped so the key
+// is pure hex and a fixed length.
+func ShareUUIDSlice(volName string) string {
+	hex := strings.ReplaceAll(strings.TrimPrefix(volName, "pvc-"), "-", "")
+	if len(hex) > ShareUUIDLen {
+		return hex[:ShareUUIDLen]
+	}
+	return hex
+}
+
+// sanitizeAppName reduces a PVC name to characters that are safe in a DSM shared
+// folder name.
+func sanitizeAppName(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(name) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_':
+			b.WriteRune('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// GenShareNameWithApp builds {status}-csi-pvc[-{app}]-{uuid} for a volume,
+// embedding a readable (truncated) app name. Falls back to the app-less form when
+// there is no usable app name.
+func GenShareNameWithApp(volName string, appName string) string {
+	base := SharePrefix + "-pvc" // k8s-csi-pvc
+	uuid := ShareUUIDSlice(volName)
+
+	app := sanitizeAppName(appName)
+	if app != "" {
+		budget := MaxShareLen - len(base) - len(uuid) - 2 // two separators
+		if budget > MaxAppNameLen {
+			budget = MaxAppNameLen
+		}
+		if budget > 0 {
+			if len(app) > budget {
+				app = app[:budget]
+			}
+			app = strings.Trim(app, "-")
+		} else {
+			app = ""
+		}
+	}
+
+	if app == "" {
+		return fmt.Sprintf("%s-%s", base, uuid)
+	}
+	return fmt.Sprintf("%s-%s-%s", base, app, uuid)
+}
+
+// ShareNameMatchesVolume reports whether a shared folder belongs to the given CSI
+// volume. It accepts both the current scheme (matched on the uuid suffix) and the
+// legacy scheme produced by GenShareName, so shares provisioned before the naming
+// change stay resolvable — otherwise every existing volume would be orphaned.
+func ShareNameMatchesVolume(shareName string, volName string) bool {
+	if shareName == GenShareName(volName) {
+		return true
+	}
+	return strings.HasSuffix(shareName, "-"+ShareUUIDSlice(volName))
+}
+
 // Status prefixes for driver-created shares. Active shares are discovered via
 // SharePrefix; archived ones deliberately fall outside it so the driver stops
 // managing them.

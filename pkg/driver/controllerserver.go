@@ -198,12 +198,20 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		enableRecycleBin = utils.StringToBoolean(v)
 	}
 
+	// includePvcName (SMB/NFS StorageClass param): embed a readable, truncated PVC
+	// name in the shared folder name so shares can be identified in DSM. Off by
+	// default, so existing StorageClasses keep the legacy naming.
+	shareName := models.GenShareName(volName)
+	if utils.StringToBoolean(params["includePvcName"]) {
+		shareName = models.GenShareNameWithApp(volName, params["csi.storage.k8s.io/pvc/name"])
+	}
+
 	spec := &models.CreateK8sVolumeSpec{
 		DsmIp:            params["dsm"],
 		K8sVolumeName:    volName,
 		BackendName:      models.GenBackendName(volName),
 		Description:      description,
-		ShareName:        models.GenShareName(volName),
+		ShareName:        shareName,
 		Location:         params["location"],
 		Size:             sizeInByte,
 		Type:             params["type"],

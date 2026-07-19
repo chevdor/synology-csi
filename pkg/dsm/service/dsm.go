@@ -738,8 +738,13 @@ func (service *DsmService) GetVolume(volId string) *models.K8sVolumeRespSpec {
 func (service *DsmService) GetVolumeByName(volName string) *models.K8sVolumeRespSpec {
 	volumes := service.ListVolumes()
 	for _, volume := range volumes {
+		// Shares are matched on their uuid key (and the legacy exact name) rather
+		// than by rebuilding the name: the optional app segment comes from
+		// StorageClass/PVC parameters, which are not recoverable from volName here.
+		// Without this, an idempotent CreateVolume retry would fail to find the
+		// existing share and provision a duplicate.
 		if volume.Name == models.GenBackendName(volName) ||
-			volume.Name == models.GenShareName(volName) {
+			models.ShareNameMatchesVolume(volume.Name, volName) {
 			return volume
 		}
 	}
