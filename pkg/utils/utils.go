@@ -5,6 +5,7 @@ package utils
 import (
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 )
 
@@ -24,6 +25,32 @@ const (
 	AuthTypeReadOnly  AuthType = "ro"
 	AuthTypeNoAccess  AuthType = "no"
 )
+
+// managedShareRe matches the only shared folders this driver is ever allowed to
+// modify or delete: active volumes (k8s-csi-pvc-…) and archived ones that were
+// created by the driver and later renamed on delete (del-csi-pvc-…).
+//
+// The "csi-pvc" token is a deliberately fixed, non-configurable safety anchor: a
+// configurable prefix could be set to an empty or overly broad value and would
+// then match every shared folder on the volume.
+var managedShareRe = regexp.MustCompile(`^(k8s|del)-csi-pvc(-|$)`)
+
+// IsManagedShare reports whether a DSM shared folder belongs to this driver.
+func IsManagedShare(shareName string) bool {
+	return managedShareRe.MatchString(shareName)
+}
+
+// AssertManagedShare fails closed: it returns an error unless the shared folder is
+// one this driver created. Call it as a precondition of every mutating DSM share
+// operation so a bug or an unexpected name can never touch a user's own data.
+func AssertManagedShare(op string, shareName string) error {
+	if IsManagedShare(shareName) {
+		return nil
+	}
+	return fmt.Errorf(
+		"refusing to %s shared folder %q: not managed by this driver (must match %s)",
+		op, shareName, managedShareRe.String())
+}
 
 func SliceContains(items []string, s string) bool {
 	for _, item := range items {

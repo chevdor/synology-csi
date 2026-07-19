@@ -207,6 +207,12 @@ func (dsm *DSM) ShareClone(spec ShareCloneSpec) (string, error) {
 }
 
 func (dsm *DSM) ShareDelete(shareName string) error {
+	// Hard safety guard: never delete a shared folder this driver did not create.
+	if err := utils.AssertManagedShare("delete", shareName); err != nil {
+		log.Error(err)
+		return err
+	}
+
 	params := url.Values{}
 	params.Add("api", "SYNO.Core.Share")
 	params.Add("method", "delete")
@@ -219,6 +225,12 @@ func (dsm *DSM) ShareDelete(shareName string) error {
 }
 
 func (dsm *DSM) ShareSet(shareName string, updateInfo ShareUpdateInfo) error {
+	// Hard safety guard: never modify a shared folder this driver did not create.
+	if err := utils.AssertManagedShare("modify", shareName); err != nil {
+		log.Error(err)
+		return err
+	}
+
 	params := url.Values{}
 	params.Add("api", "SYNO.Core.Share")
 	params.Add("method", "set")
