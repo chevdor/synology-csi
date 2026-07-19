@@ -6,6 +6,9 @@
 #
 # Pinned to actions@v4 (node20). Newer majors need the node24 runtime, which this
 # act_runner does not support yet.
+#
+# Registry credentials come from the user-level Gitea secrets HARBOR_USER and
+# HARBOR_PASSWORD; nothing is embedded here.
 name: build-chevdor
 
 on:
@@ -41,9 +44,11 @@ jobs:
           # controller: a silently-changing storage driver is not debuggable.
           echo "tag=v1.3.0-chevdor-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
+      # Uses the user-level HARBOR_USER / HARBOR_PASSWORD secrets, which are
+      # inherited by this repo — no repo-level secrets to maintain.
       - name: Log in to Harbor
         run: |
-          echo "${{ secrets.HARBOR_TOKEN }}" \
+          echo "${{ secrets.HARBOR_PASSWORD }}" \
             | docker login "$REGISTRY" -u "${{ secrets.HARBOR_USER }}" --password-stdin
 
       - name: Build and push
