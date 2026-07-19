@@ -19,6 +19,14 @@ on:
 env:
   REGISTRY: harbor.k8s.chevdor.cc
   IMAGE: chevdor/synology-csi
+  # The runner is docker-in-docker: the daemon lives in a sidecar reachable over
+  # TLS, not on a local unix socket. Without these, docker calls fail with
+  # "dial unix /var/run/docker.sock: no such file or directory".
+  # Same settings as chevdor/vinz.
+  DOCKER_HOST: "tcp://docker:2376/"
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_TLS_VERIFY: 1
+  DOCKER_CERT_PATH: "/certs/client"
 
 jobs:
   build:
