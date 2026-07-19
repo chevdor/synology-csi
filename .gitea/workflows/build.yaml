@@ -46,10 +46,19 @@ jobs:
 
       # Uses the user-level HARBOR_USER / HARBOR_PASSWORD secrets, which are
       # inherited by this repo — no repo-level secrets to maintain.
+      #
+      # The secrets are passed as env vars rather than interpolated into the shell
+      # line: Harbor robot names contain a '$' (robot$project+name), and inside
+      # double quotes bash would expand "$project" to an empty string, silently
+      # mangling the username into an unauthorized login. Bash does not re-expand
+      # the *value* of a variable, so this form is safe.
       - name: Log in to Harbor
+        env:
+          HARBOR_USER: ${{ secrets.HARBOR_USER }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
         run: |
-          echo "${{ secrets.HARBOR_PASSWORD }}" \
-            | docker login "$REGISTRY" -u "${{ secrets.HARBOR_USER }}" --password-stdin
+          printf '%s' "$HARBOR_PASSWORD" \
+            | docker login "$REGISTRY" -u "$HARBOR_USER" --password-stdin
 
       - name: Build and push
         run: |
