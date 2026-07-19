@@ -16,6 +16,7 @@ import (
 	"github.com/SynologyOpenSource/synology-csi/pkg/dsm/common"
 	"github.com/SynologyOpenSource/synology-csi/pkg/dsm/service"
 	"github.com/SynologyOpenSource/synology-csi/pkg/logger"
+	"github.com/SynologyOpenSource/synology-csi/pkg/models"
 	"github.com/SynologyOpenSource/synology-csi/pkg/utils/hostexec"
 )
 
@@ -28,6 +29,8 @@ var (
 	logLevel       = "info"
 	webapiDebug    = false
 	multipathForUC = true
+	// Behaviour of SMB/NFS shared folders when their volume is deleted
+	onDeletePolicy = models.OnDeleteDelete
 	// Locations is tools and directories
 	chrootDir      = ""
 	iscsiadmPath   = ""
@@ -64,6 +67,7 @@ func driverStart() error {
 	log.Infof("CSI Options = {%s, %s, %s}", csiNodeID, csiEndpoint, csiClientInfoPath)
 
 	dsmService := service.NewDsmService()
+	dsmService.SetOnDeletePolicy(onDeletePolicy)
 
 	// 1. Login DSMs by given ClientInfo
 	info, err := common.LoadConfig(csiClientInfoPath)
@@ -128,6 +132,9 @@ func addFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().StringVar(&logLevel, "log-level", logLevel, "Log level (debug, info, warn, error, fatal)")
 	cmd.PersistentFlags().BoolVarP(&webapiDebug, "debug", "d", webapiDebug, "Enable webapi debugging logs")
 	cmd.PersistentFlags().BoolVar(&multipathForUC, "multipath", multipathForUC, "Set to 'false' to disable multipath for UC")
+	cmd.PersistentFlags().StringVar(&onDeletePolicy, "on-delete", onDeletePolicy,
+		"What to do with an SMB/NFS shared folder when its volume is deleted: "+
+			"'delete' destroys it, 'archive' keeps it renamed k8s-... -> del-...")
 	cmd.PersistentFlags().StringVar(&chrootDir, "chroot-dir", chrootDir, "Host directory to chroot into (empty disables chroot)")
 	cmd.PersistentFlags().StringVar(&iscsiadmPath, "iscsiadm-path", iscsiadmPath, "Full path of iscsiadm executable")
 	cmd.PersistentFlags().StringVar(&multipathPath, "multipath-path", multipathPath, "Full path of multipath executable")

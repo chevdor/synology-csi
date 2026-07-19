@@ -4,6 +4,7 @@ package models
 
 import (
 	"fmt"
+	"strings"
 )
 
 const (
@@ -49,4 +50,34 @@ func GenShareName(volName string) string {
 		return shareName[:MaxShareLen]
 	}
 	return shareName
+}
+
+// Status prefixes for driver-created shares. Active shares are discovered via
+// SharePrefix; archived ones deliberately fall outside it so the driver stops
+// managing them.
+const (
+	ShareStatusActive   = "k8s"
+	ShareStatusArchived = "del"
+)
+
+// onDelete policies for share-backed (SMB/NFS) volumes.
+//
+// This is a driver-level setting rather than a StorageClass parameter because the
+// CSI spec only delivers StorageClass parameters to CreateVolume; DeleteVolume
+// receives just a volume id, so the driver cannot learn a per-class policy at the
+// moment it matters.
+const (
+	OnDeleteDelete  = "delete"  // destroy the shared folder (upstream behaviour)
+	OnDeleteArchive = "archive" // keep it, renamed k8s-… -> del-…
+)
+
+// GenArchivedShareName swaps the 3-char status prefix, k8s-csi-pvc-… -> del-csi-pvc-….
+// Renaming keeps the folder (and its data) but marks it as belonging to a deleted
+// PVC, and drops it out of discovery since that matches SharePrefix.
+// The name length is unchanged, so the DSM 32-char limit still holds.
+func GenArchivedShareName(shareName string) string {
+	if !strings.HasPrefix(shareName, ShareStatusActive) {
+		return shareName
+	}
+	return ShareStatusArchived + strings.TrimPrefix(shareName, ShareStatusActive)
 }

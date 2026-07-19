@@ -23,12 +23,30 @@ import (
 
 type DsmService struct {
 	dsms map[string]*webapi.DSM
+	// onDelete controls what happens to a share-backed volume's shared folder when
+	// the volume is deleted: models.OnDeleteDelete (default, destroy it) or
+	// models.OnDeleteArchive (keep it, renamed k8s-… -> del-…).
+	onDelete string
 }
 
 func NewDsmService() *DsmService {
 	return &DsmService{
-		dsms: make(map[string]*webapi.DSM),
+		dsms:     make(map[string]*webapi.DSM),
+		onDelete: models.OnDeleteDelete,
 	}
+}
+
+// SetOnDeletePolicy selects what happens to a share-backed volume's shared folder
+// on delete. Unknown values fall back to the safe upstream default.
+func (service *DsmService) SetOnDeletePolicy(policy string) {
+	switch policy {
+	case models.OnDeleteDelete, models.OnDeleteArchive:
+		service.onDelete = policy
+	default:
+		log.Warnf("Unknown onDelete policy %q, falling back to %q", policy, models.OnDeleteDelete)
+		service.onDelete = models.OnDeleteDelete
+	}
+	log.Infof("onDelete policy for SMB/NFS volumes: %s", service.onDelete)
 }
 
 func (service *DsmService) AddDsm(client common.ClientInfo) error {
@@ -601,6 +619,18 @@ func (service *DsmService) DeleteVolume(volId string) error {
 	}
 
 	if k8sVolume.Protocol == utils.ProtocolSmb || k8sVolume.Protocol == utils.ProtocolNfs {
+		if service.onDelete == models.OnDeleteArchive {
+			archivedName := models.GenArchivedShareName(k8sVolume.Share.Name)
+			if err := dsm.ShareRename(k8sVolume.Share, archivedName); err != nil {
+				log.Errorf("[%s] Failed to archive Share(%s -> %s): %v",
+					dsm.Ip, k8sVolume.Share.Name, archivedName, err)
+				return err
+			}
+			log.Infof("[%s] Archived Share(%s -> %s); data kept, no longer managed by the driver",
+				dsm.Ip, k8sVolume.Share.Name, archivedName)
+			return nil
+		}
+
 		if err := dsm.ShareDelete(k8sVolume.Share.Name); err != nil {
 			log.Errorf("[%s] Failed to delete Share(%s): %v", dsm.Ip, k8sVolume.Share.Name, err)
 			return err

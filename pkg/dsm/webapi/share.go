@@ -252,6 +252,28 @@ func (dsm *DSM) ShareSet(shareName string, updateInfo ShareUpdateInfo) error {
 	return shareErrCodeMapping(resp.ErrorCode, err)
 }
 
+// ShareRename renames a shared folder via SYNO.Core.Share `set`. This is how a
+// volume is archived on delete (k8s-… -> del-…): the data is kept, the folder is
+// clearly marked, and it leaves the driver's discovery scope.
+//
+// Both the current and the new name must be driver-managed, so a rename can never
+// be used to reach — or to disguise something as — a user's own shared folder.
+func (dsm *DSM) ShareRename(shareInfo ShareInfo, newName string) error {
+	if err := utils.AssertManagedShare("rename", shareInfo.Name); err != nil {
+		log.Error(err)
+		return err
+	}
+	if err := utils.AssertManagedShare("rename to", newName); err != nil {
+		log.Error(err)
+		return err
+	}
+
+	return dsm.ShareSet(shareInfo.Name, ShareUpdateInfo{
+		Name:    newName,
+		VolPath: shareInfo.VolPath,
+	})
+}
+
 func (dsm *DSM) SetShareQuota(shareInfo ShareInfo, newSizeInMB int64) error {
 	updateInfo := ShareUpdateInfo{
 		Name:           shareInfo.Name,
