@@ -60,6 +60,36 @@ func (service *DsmService) SetDeleteOnUpdate(enabled bool) {
 	log.Infof("deleteOnUpdate (purge archived shares): %t", enabled)
 }
 
+// shareDeleteAction is what DeleteVolume should do with a share-backed volume.
+type shareDeleteAction int
+
+const (
+	shareActionDelete  shareDeleteAction = iota // destroy the folder
+	shareActionArchive                          // keep it, renamed k8s-… -> del-…
+	shareActionPurge                            // it is already archived: really remove it
+	shareActionRefuse                           // unsafe combination, do nothing
+)
+
+// decideShareDeleteAction is deliberately pure so the branch that destroys data can
+// be exhaustively tested without a DSM. purgeArchived says the caller resolved the
+// volume through the archived lookup.
+func decideShareDeleteAction(shareName string, onDelete string, purgeArchived bool) shareDeleteAction {
+	if purgeArchived {
+		// Only ever purge something that really is archived. If the lookup handed us
+		// a live share, refuse rather than destroy it.
+		if !models.IsArchivedShareName(shareName) {
+			return shareActionRefuse
+		}
+		return shareActionPurge
+	}
+	// An already-archived share must never be re-archived (that would rename del-…
+	// to itself and leave it undeletable through the normal path).
+	if onDelete == models.OnDeleteArchive && !models.IsArchivedShareName(shareName) {
+		return shareActionArchive
+	}
+	return shareActionDelete
+}
+
 // getArchivedVolume finds a share-backed volume including archived (del-…) ones.
 // Only used by the purge path; normal discovery must never return archived shares.
 func (service *DsmService) getArchivedVolume(volId string) *models.K8sVolumeRespSpec {
@@ -660,16 +690,12 @@ func (service *DsmService) DeleteVolume(volId string) error {
 	}
 
 	if k8sVolume.Protocol == utils.ProtocolSmb || k8sVolume.Protocol == utils.ProtocolNfs {
-		if purgeArchived {
-			// Defence in depth: never let the purge branch destroy a live volume,
-			// even if the lookup above were to regress.
-			if !models.IsArchivedShareName(k8sVolume.Share.Name) {
-				return status.Errorf(codes.Internal,
-					"refusing to purge Share(%s): it is not archived", k8sVolume.Share.Name)
-			}
-			log.Infof("[%s] Purging already-archived Share(%s) (deleteOnUpdate)",
-				dsm.Ip, k8sVolume.Share.Name)
-		} else if service.onDelete == models.OnDeleteArchive {
+		switch decideShareDeleteAction(k8sVolume.Share.Name, service.onDelete, purgeArchived) {
+		case shareActionRefuse:
+			return status.Errorf(codes.Internal,
+				"refusing to purge Share(%s): it is not archived", k8sVolume.Share.Name)
+
+		case shareActionArchive:
 			archivedName := models.GenArchivedShareName(k8sVolume.Share.Name)
 			if err := dsm.ShareRename(k8sVolume.Share, archivedName); err != nil {
 				log.Errorf("[%s] Failed to archive Share(%s -> %s): %v",
@@ -679,6 +705,10 @@ func (service *DsmService) DeleteVolume(volId string) error {
 			log.Infof("[%s] Archived Share(%s -> %s); data kept, no longer managed by the driver",
 				dsm.Ip, k8sVolume.Share.Name, archivedName)
 			return nil
+
+		case shareActionPurge:
+			log.Infof("[%s] Purging already-archived Share(%s) (deleteOnUpdate)",
+				dsm.Ip, k8sVolume.Share.Name)
 		}
 
 		if err := dsm.ShareDelete(k8sVolume.Share.Name); err != nil {
@@ -703,7 +733,7 @@ func (service *DsmService) DeleteVolume(volId string) error {
 			if  _, err := dsm.SubsystemGet(subsystem.Uuid); err != nil && errors.Is(err, utils.FailedToGetSubsystemError("")) {
 				return nil
 			}
-			log.Errorf("[%s] Failed to delete Subsystem(%d): %v", dsm.Ip, subsystem.Uuid, err)
+			log.Errorf("[%s] Failed to delete Subsystem(%s): %v", dsm.Ip, subsystem.Uuid, err)
 			return err
 		}
 	} else {

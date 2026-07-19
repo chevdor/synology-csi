@@ -190,6 +190,19 @@ Create and apply StorageClasses with the properties you want.
     | *csi.storage.k8s.io/node-stage-secret-name*      | string | The name of node-stage-secret. Required if DSM shared folder is accessed via SMB.                                                                                  | -       | SMB                 |
     | *csi.storage.k8s.io/node-stage-secret-namespace* | string | The namespace of node-stage-secret. Required if DSM shared folder is accessed via SMB.                                                                             | -       | SMB                 |
     | *mountPermissions*                               | string | Mounted folder permissions. If set as non-zero, driver will perform `chmod` after mount                                                                            | '0750'  | NFS                 |
+    | *enableRecycleBin*                               | string | Create the shared folder with its Recycle Bin enabled. Deleted files stay in `#recycle` and keep consuming the share quota until it is emptied.                     | 'true'  | SMB, NFS            |
+    | *includePvcName*                                 | string | Embed a readable, truncated PVC name in the shared folder name (`k8s-csi-pvc-myapp-<uuid>`) so shares are identifiable in DSM. Applies to newly created shares.     | 'false' | SMB, NFS            |
+
+    **Driver flags (SMB/NFS shared folders)**
+
+    These are driver-level rather than StorageClass parameters, because CSI only
+    delivers StorageClass parameters to `CreateVolume` — `DeleteVolume` receives just
+    a volume id and so cannot learn a per-class policy.
+
+    | Flag | Description | Default |
+    | ---- | ----------- | ------- |
+    | `--on-delete` | What to do with a shared folder when its volume is deleted. `delete` destroys it; `archive` keeps the data and renames it `k8s-…` → `del-…`, which also removes it from the driver's scope. Requires `reclaimPolicy: Delete` — with `Retain`, `DeleteVolume` is never called and nothing is archived. | `delete` |
+    | `--delete-on-update` | Allow deleting an already-archived (`del-…`) shared folder, so archived data can be purged from Kubernetes instead of by hand on the NAS. Destructive, hence opt-in. | `false` |
 
     **Notice**
 

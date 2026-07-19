@@ -149,6 +149,12 @@ func (dsm *DSM) ShareList() ([]ShareInfo, error) {
 }
 
 func (dsm *DSM) ShareCreate(spec ShareCreateSpec) error {
+	// Hard safety guard: only ever create folders inside the driver's namespace.
+	if err := utils.AssertManagedShare("create", spec.Name); err != nil {
+		log.Error(err)
+		return err
+	}
+
 	params := url.Values{}
 	params.Add("api", "SYNO.Core.Share")
 	params.Add("method", "create")
@@ -167,6 +173,18 @@ func (dsm *DSM) ShareCreate(spec ShareCreateSpec) error {
 }
 
 func (dsm *DSM) ShareClone(spec ShareCloneSpec) (string, error) {
+	// Hard safety guard: both the destination and the *source* must be ours.
+	// Guarding the source matters because cloning reads someone else's data into a
+	// folder we then own.
+	if err := utils.AssertManagedShare("clone into", spec.Name); err != nil {
+		log.Error(err)
+		return "", err
+	}
+	if err := utils.AssertManagedShare("clone from", spec.ShareInfo.NameOrg); err != nil {
+		log.Error(err)
+		return "", err
+	}
+
 	params := url.Values{}
 	params.Add("api", "SYNO.Core.Share")
 	params.Add("method", "clone")
