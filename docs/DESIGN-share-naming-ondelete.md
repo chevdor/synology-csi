@@ -120,21 +120,39 @@ today. Purge requires the delete-path lookup to resolve a share **by its DSM UUI
 4. **Backward compatibility.** Existing shares are `k8s-csi-pvc-<uuid20>` with no name segment;
    uuid-suffix matching must still resolve them for both idempotency and delete.
 
-## Rename over the DSM API — verification
+## Rename over the DSM API — VERIFIED ✅
 
-Renaming at the **DSM level is confirmed**: a manual UI rename
-(`k8s-csi-pvc-f0601a65-…` → `del-csi-pvc-f0601a65-…`) preserved the data, and the renamed folder
-correctly dropped out of driver discovery.
+**`ShareSet` (`SYNO.Core.Share` `set`) with a changed `name` renames a shared folder.** No
+fallback needed; the Description-tagging alternative is not required and has been dropped.
 
-The **API path** is what `archive` depends on. Candidate: `ShareSet`
-(`SYNO.Core.Share` `set`, already used for quota updates) with a changed `name`.
+Working call — pass the *current* name as the `name` parameter and the new name inside
+`shareinfo` (`VolPath` is required and must be carried over):
 
-> **STATUS: to be verified by the probe (step 1 of the test plan). Replace this block with the
-> result — the working API call and any constraints — once the probe has run.**
+```go
+dsm.ShareSet(shareInfo.Name, ShareUpdateInfo{
+    Name:    newName,          // the new name
+    VolPath: shareInfo.VolPath, // required
+})
+```
 
-If rename proves unsupported over the API, the fallback is to tag the share **Description**
-via `ShareSet` (proven to work), accepting that Description shows only in the folder *detail*,
-not the folder list.
+Verified end-to-end against a live DSM 7 Btrfs volume:
+
+| check | result |
+|---|---|
+| Rename executes | `Archived Share(k8s-csi-pvc-729da2ea… -> del-csi-pvc-729da2ea…)`, CSI `GRPC error: <nil>` |
+| **Data preserved** | 5 MB payload written pre-archive, re-read post-archive over raw NFS — **md5 identical** (`9b10e39b…`), canary file intact |
+| Old name/export released | mounting the old path fails with `access denied by server` — a copy or partial rename would have left it mountable |
+| DSM agrees | folder listed as `del-…`, `Shared Folder Size: 5.00 MB` |
+| No orphaned PV | k8s deletes the PV normally (unlike `Retain`, which leaves `Released` PVs) |
+
+Constraints found:
+
+* Requires `reclaimPolicy: Delete` on the StorageClass — with `Retain`, `DeleteVolume` is never
+  called and archiving cannot happen. **Archive replaces `Retain`; it is not combined with it.**
+* The DSM UI caches the shared-folder list: a rename may not appear until refresh. Trust the
+  filesystem/API over the UI when they disagree.
+* The archived folder keeps its NFS export, so it stays mountable in-cluster by path. Decide
+  separately whether archiving should also drop the export.
 
 ## Test plan
 
