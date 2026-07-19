@@ -64,9 +64,16 @@ func (service *DsmService) SetDeleteOnUpdate(enabled bool) {
 // Only used by the purge path; normal discovery must never return archived shares.
 func (service *DsmService) getArchivedVolume(volId string) *models.K8sVolumeRespSpec {
 	for _, volume := range service.listSMBorNFSVolumes("", true) {
-		if volume.VolumeId == volId {
-			return volume
+		if volume.VolumeId != volId {
+			continue
 		}
+		// Must be *archived*, not merely driver-managed. The widened listing also
+		// returns active shares, and returning one here would make the caller purge
+		// a live volume instead of archiving it.
+		if !models.IsArchivedShareName(volume.Share.Name) {
+			return nil
+		}
+		return volume
 	}
 	return nil
 }
@@ -654,6 +661,12 @@ func (service *DsmService) DeleteVolume(volId string) error {
 
 	if k8sVolume.Protocol == utils.ProtocolSmb || k8sVolume.Protocol == utils.ProtocolNfs {
 		if purgeArchived {
+			// Defence in depth: never let the purge branch destroy a live volume,
+			// even if the lookup above were to regress.
+			if !models.IsArchivedShareName(k8sVolume.Share.Name) {
+				return status.Errorf(codes.Internal,
+					"refusing to purge Share(%s): it is not archived", k8sVolume.Share.Name)
+			}
 			log.Infof("[%s] Purging already-archived Share(%s) (deleteOnUpdate)",
 				dsm.Ip, k8sVolume.Share.Name)
 		} else if service.onDelete == models.OnDeleteArchive {

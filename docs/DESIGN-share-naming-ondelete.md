@@ -104,6 +104,46 @@ path that is on by default would quietly re-introduce exactly that risk.
 today. Purge requires the delete-path lookup to resolve a share **by its DSM UUID across both
 `k8s-` and `del-` prefixes** (the UUID is stable across rename), gated by `deleteOnUpdate`.
 
+## Purge runbook — removing an archived share from Kubernetes
+
+Requires the driver to run with `--delete-on-update`. An archived share has no
+Kubernetes object left, so you re-attach one to it and delete that.
+
+1. Find the archived share's **volume id** (its DSM share UUID — stable across the
+   rename; it is the `volumeHandle` the PV had before deletion).
+2. Create a static PV pointing at it, plus a PVC bound by `volumeName`:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: purge-myapp
+  annotations:
+    # REQUIRED — see gotcha below
+    pv.kubernetes.io/provisioned-by: csi.san.synology.com
+spec:
+  capacity: { storage: 1Gi }
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Delete   # REQUIRED: Retain never calls DeleteVolume
+  storageClassName: <your-sc>
+  csi:
+    driver: csi.san.synology.com
+    volumeHandle: <archived share UUID>
+    volumeAttributes: { protocol: nfs, dsm: <dsm-host> }
+```
+
+3. `kubectl delete pvc purge-myapp` → the driver logs
+   `Purging already-archived Share(del-…)` and the folder is removed.
+
+### ⚠️ Gotcha: `pv.kubernetes.io/provisioned-by` is mandatory
+
+Without that annotation, **external-provisioner does not consider the PV its own,
+never calls `DeleteVolume`, and the PV sits in `Released` forever** — nothing
+reaches the driver and nothing is purged. There is no error; it simply does
+nothing, which makes it easy to misdiagnose as a driver bug. Observed and
+confirmed: adding the annotation to an already-`Released` PV immediately triggered
+the purge.
+
 ## Correctness constraints (the landmines)
 
 1. **Idempotency.** `GetVolumeByName(volName)` matches
@@ -119,6 +159,12 @@ today. Purge requires the delete-path lookup to resolve a share **by its DSM UUI
 3. **Uniqueness.** Truncate `name`, never `uuid`.
 4. **Backward compatibility.** Existing shares are `k8s-csi-pvc-<uuid20>` with no name segment;
    uuid-suffix matching must still resolve them for both idempotency and delete.
+5. **"Managed" is not "archived".** The purge lookup widens discovery to reach `del-…` shares,
+   and that widened listing *also* returns active ones. Anything that destroys data must test
+   `IsArchivedShareName` explicitly — treating "driver-managed" as "archived" would delete a live
+   volume instead of archiving it. This is reachable in practice because
+   `listSMBorNFSVolumes` skips shares whose NFS-privilege lookup transiently fails, so two
+   passes can disagree about whether an active share exists.
 
 ## Rename over the DSM API — verification
 

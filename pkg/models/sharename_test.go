@@ -103,3 +103,34 @@ func TestArchivedShareKeepsLookupKey(t *testing.T) {
 		t.Fatalf("archiving changed length: %q -> %q", active, archived)
 	}
 }
+
+// Regression: "managed by the driver" must never be mistaken for "archived".
+// The purge path relies on this distinction; conflating them would delete a live
+// volume instead of archiving it.
+func TestIsArchivedShareName(t *testing.T) {
+	cases := []struct {
+		share string
+		want  bool
+	}{
+		{"del-csi-pvc-myapp-729da2eaf", true},
+		{"del-csi-pvc-729da2eaf", true},
+		{"k8s-csi-pvc-myapp-729da2eaf", false}, // active — must NOT look archived
+		{"k8s-csi-pvc-729da2eaf", false},
+		{"photo", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := IsArchivedShareName(c.share); got != c.want {
+			t.Fatalf("IsArchivedShareName(%q) = %v, want %v", c.share, got, c.want)
+		}
+	}
+
+	// Every active name must archive into something that reports as archived.
+	active := GenShareNameWithApp(testVolName, "myapp")
+	if IsArchivedShareName(active) {
+		t.Fatalf("active share %q reported as archived", active)
+	}
+	if !IsArchivedShareName(GenArchivedShareName(active)) {
+		t.Fatalf("archived form of %q not reported as archived", active)
+	}
+}

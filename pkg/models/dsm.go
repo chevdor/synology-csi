@@ -153,6 +153,18 @@ const (
 	OnDeleteArchive = "archive" // keep it, renamed k8s-… -> del-…
 )
 
+// ArchivedSharePrefix is to archived shares what SharePrefix is to active ones
+// (k8s-csi -> del-csi). Derived rather than hardcoded so the two cannot drift.
+var ArchivedSharePrefix = ShareStatusArchived + strings.TrimPrefix(SharePrefix, ShareStatusActive)
+
+// IsArchivedShareName reports whether a share has been archived (belongs to a
+// deleted PVC). Callers that destroy data must check this explicitly: "managed by
+// the driver" is NOT the same as "archived", and conflating the two risks deleting
+// a live volume instead of archiving it.
+func IsArchivedShareName(shareName string) bool {
+	return strings.HasPrefix(shareName, ArchivedSharePrefix)
+}
+
 // GenArchivedShareName swaps the 3-char status prefix, k8s-csi-pvc-… -> del-csi-pvc-….
 // Renaming keeps the folder (and its data) but marks it as belonging to a deleted
 // PVC, and drops it out of discovery since that matches SharePrefix.
