@@ -31,6 +31,7 @@ var (
 	multipathForUC = true
 	// Behaviour of SMB/NFS shared folders when their volume is deleted
 	onDeletePolicy = models.OnDeleteDelete
+	deleteOnUpdate = false
 	// Locations is tools and directories
 	chrootDir      = ""
 	iscsiadmPath   = ""
@@ -68,6 +69,7 @@ func driverStart() error {
 
 	dsmService := service.NewDsmService()
 	dsmService.SetOnDeletePolicy(onDeletePolicy)
+	dsmService.SetDeleteOnUpdate(deleteOnUpdate)
 
 	// 1. Login DSMs by given ClientInfo
 	info, err := common.LoadConfig(csiClientInfoPath)
@@ -132,6 +134,9 @@ func addFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().StringVar(&logLevel, "log-level", logLevel, "Log level (debug, info, warn, error, fatal)")
 	cmd.PersistentFlags().BoolVarP(&webapiDebug, "debug", "d", webapiDebug, "Enable webapi debugging logs")
 	cmd.PersistentFlags().BoolVar(&multipathForUC, "multipath", multipathForUC, "Set to 'false' to disable multipath for UC")
+	cmd.PersistentFlags().BoolVar(&deleteOnUpdate, "delete-on-update", deleteOnUpdate,
+		"Allow deleting an already-archived (del-...) shared folder, so archived data "+
+			"can be purged from Kubernetes. Destructive, hence off by default")
 	cmd.PersistentFlags().StringVar(&onDeletePolicy, "on-delete", onDeletePolicy,
 		"What to do with an SMB/NFS shared folder when its volume is deleted: "+
 			"'delete' destroys it, 'archive' keeps it renamed k8s-... -> del-...")
