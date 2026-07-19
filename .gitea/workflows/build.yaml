@@ -1,0 +1,61 @@
+# Downstream build for the chevdor production branch.
+#
+# Lives in .gitea/workflows (not .github/workflows) on purpose: Gitea reads this
+# path and upstream never sees it, so it stays out of any PR sent upstream and
+# cannot conflict when chevdor is rebased onto a new upstream release.
+#
+# Pinned to actions@v4 (node20). Newer majors need the node24 runtime, which this
+# act_runner does not support yet.
+name: build-chevdor
+
+on:
+  push:
+    branches: [chevdor]
+  workflow_dispatch:
+
+env:
+  REGISTRY: harbor.k8s.chevdor.cc
+  IMAGE: chevdor/synology-csi
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Vet and unit tests
+        run: |
+          go vet ./...
+          go test ./pkg/...
+
+      - name: Compute image tag
+        id: tag
+        run: |
+          # Immutable, SHA-pinned. Never publish a floating tag for a CSI
+          # controller: a silently-changing storage driver is not debuggable.
+          echo "tag=v1.3.0-chevdor-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Harbor
+        run: |
+          echo "${{ secrets.HARBOR_TOKEN }}" \
+            | docker login "$REGISTRY" -u "${{ secrets.HARBOR_USER }}" --password-stdin
+
+      - name: Build and push
+        run: |
+          TAG="$REGISTRY/$IMAGE:${{ steps.tag.outputs.tag }}"
+          docker build --platform linux/amd64 -f Dockerfile -t "$TAG" .
+          docker push "$TAG"
+          echo "pushed $TAG"
+
+      - name: Summary
+        run: |
+          echo "### Image" >> "$GITHUB_STEP_SUMMARY"
+          echo '`'"$REGISTRY/$IMAGE:${{ steps.tag.outputs.tag }}"'`' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deploy by pinning this tag in the synology-csi controller." >> "$GITHUB_STEP_SUMMARY"
