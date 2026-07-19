@@ -27,6 +27,10 @@ type DsmService struct {
 	// the volume is deleted: models.OnDeleteDelete (default, destroy it) or
 	// models.OnDeleteArchive (keep it, renamed k8s-… -> del-…).
 	onDelete string
+	// deleteOnUpdate allows a delete that resolves to an already-archived (del-…)
+	// share to actually remove it, so archived data can be purged from Kubernetes
+	// without logging into the NAS. Off by default: purging is destructive.
+	deleteOnUpdate bool
 }
 
 func NewDsmService() *DsmService {
@@ -47,6 +51,24 @@ func (service *DsmService) SetOnDeletePolicy(policy string) {
 		service.onDelete = models.OnDeleteDelete
 	}
 	log.Infof("onDelete policy for SMB/NFS volumes: %s", service.onDelete)
+}
+
+// SetDeleteOnUpdate enables purging of already-archived (del-…) shares. Destructive,
+// hence opt-in.
+func (service *DsmService) SetDeleteOnUpdate(enabled bool) {
+	service.deleteOnUpdate = enabled
+	log.Infof("deleteOnUpdate (purge archived shares): %t", enabled)
+}
+
+// getArchivedVolume finds a share-backed volume including archived (del-…) ones.
+// Only used by the purge path; normal discovery must never return archived shares.
+func (service *DsmService) getArchivedVolume(volId string) *models.K8sVolumeRespSpec {
+	for _, volume := range service.listSMBorNFSVolumes("", true) {
+		if volume.VolumeId == volId {
+			return volume
+		}
+	}
+	return nil
 }
 
 func (service *DsmService) AddDsm(client common.ClientInfo) error {
@@ -608,6 +630,18 @@ func (service *DsmService) CreateVolume(spec *models.CreateK8sVolumeSpec) (*mode
 
 func (service *DsmService) DeleteVolume(volId string) error {
 	k8sVolume := service.GetVolume(volId)
+
+	// The volume may already be archived, in which case it is out of normal
+	// discovery. Reaching it is opt-in, because doing so means destroying data that
+	// was deliberately kept.
+	purgeArchived := false
+	if k8sVolume == nil && service.deleteOnUpdate {
+		if archived := service.getArchivedVolume(volId); archived != nil {
+			k8sVolume = archived
+			purgeArchived = true
+		}
+	}
+
 	if k8sVolume == nil {
 		log.Infof("Skip delete volume[%s] that is no exist", volId)
 		return nil
@@ -619,7 +653,10 @@ func (service *DsmService) DeleteVolume(volId string) error {
 	}
 
 	if k8sVolume.Protocol == utils.ProtocolSmb || k8sVolume.Protocol == utils.ProtocolNfs {
-		if service.onDelete == models.OnDeleteArchive {
+		if purgeArchived {
+			log.Infof("[%s] Purging already-archived Share(%s) (deleteOnUpdate)",
+				dsm.Ip, k8sVolume.Share.Name)
+		} else if service.onDelete == models.OnDeleteArchive {
 			archivedName := models.GenArchivedShareName(k8sVolume.Share.Name)
 			if err := dsm.ShareRename(k8sVolume.Share, archivedName); err != nil {
 				log.Errorf("[%s] Failed to archive Share(%s -> %s): %v",
@@ -718,7 +755,7 @@ func (service *DsmService) listISCSIVolumes(dsmIp string) (infos []*models.K8sVo
 
 func (service *DsmService) ListVolumes() (infos []*models.K8sVolumeRespSpec) {
 	infos = append(infos, service.listISCSIVolumes("")...)
-	infos = append(infos, service.listSMBorNFSVolumes("")...)
+	infos = append(infos, service.listSMBorNFSVolumes("", false)...)
 	infos = append(infos, service.listNVMeVolumes("")...)
 
 	return infos

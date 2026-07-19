@@ -184,7 +184,11 @@ func (service *DsmService) createSMBorNFSVolumeByDsm(dsm *webapi.DSM, spec *mode
 	return DsmShareToK8sVolume(dsm.Ip, shareInfo, spec.Protocol), nil
 }
 
-func (service *DsmService) listSMBorNFSVolumes(dsmIp string) (infos []*models.K8sVolumeRespSpec) {
+// listSMBorNFSVolumes lists share-backed volumes. Archived shares (del-…) are
+// excluded by default: they belong to deleted PVCs and must not resurface as
+// volumes. includeArchived is used only by the opt-in purge path, which needs to
+// reach them in order to remove them.
+func (service *DsmService) listSMBorNFSVolumes(dsmIp string, includeArchived bool) (infos []*models.K8sVolumeRespSpec) {
 	for _, dsm := range service.dsms {
 		if dsmIp != "" && dsmIp != dsm.Ip {
 			continue
@@ -201,7 +205,12 @@ func (service *DsmService) listSMBorNFSVolumes(dsmIp string) (infos []*models.K8
 		}
 
 		for _, share := range shares {
-			if !strings.HasPrefix(share.Name, models.SharePrefix) {
+			if includeArchived {
+				// active (k8s-…) or archived (del-…), never anyone else's folder
+				if !utils.IsManagedShare(share.Name) {
+					continue
+				}
+			} else if !strings.HasPrefix(share.Name, models.SharePrefix) {
 				continue
 			}
 			// if share has set nfs rule, deal it as NFS
@@ -222,7 +231,7 @@ func (service *DsmService) listSMBorNFSVolumes(dsmIp string) (infos []*models.K8
 }
 
 func (service *DsmService) listSMBorNFSSnapshotsByDsm(dsm *webapi.DSM) (infos []*models.K8sSnapshotRespSpec) {
-	volumes := service.listSMBorNFSVolumes(dsm.Ip)
+	volumes := service.listSMBorNFSVolumes(dsm.Ip, false)
 	for _, volume := range volumes {
 		shareInfo := volume.Share
 		shareSnaps, err := dsm.ShareSnapshotList(shareInfo.Name)
